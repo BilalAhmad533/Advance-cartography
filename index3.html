@@ -1,0 +1,370 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>SDG 10.4 (2024) – Hover + Fixed Classes</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    html, body { height: 100%; margin: 0; font-family: Arial, Helvetica, sans-serif; }
+
+    /* ✅ Centered title bar */
+    .page-title {
+      height: 10vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 0 12px;
+      background: #ffffff;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+      z-index: 1000;
+      position: relative;
+    }
+    .page-title h2{
+      margin: 0;
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1.25;
+    }
+    .page-title .sub{
+      display:block;
+      font-size: 13px;
+      font-weight: 400;
+      color: #555;
+      margin-top: 3px;
+    }
+
+    #map { height: 90vh; width: 100vw; }
+
+    .legend, .info, .searchbox {
+      line-height: 18px;
+      color: #333;
+      background: white;
+      padding: 10px 12px;
+      font: 14px Arial, Helvetica, sans-serif;
+      box-shadow: 0 0 15px rgba(0,0,0,0.2);
+      border-radius: 8px;
+    }
+
+    .legend h4, .info h4 {
+      margin: 0 0 8px;
+      font-size: 14px;
+      line-height: 1.2;
+      text-align: center;  /* ✅ centers legend title too */
+    }
+
+    /* ✅ Perfect legend alignment */
+    .legend .row{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 6px 0;
+      white-space: nowrap;
+    }
+    .legend .swatch{
+      width: 18px;
+      height: 18px;
+      border-radius: 3px;
+      flex: 0 0 18px;
+      opacity: 0.85;
+      border: 1px solid rgba(0,0,0,0.15);
+    }
+    .legend .label{
+      flex: 1;
+    }
+
+    .legend .hint{
+      margin-top: 8px;
+      font-size: 12px;
+      color: #555;
+      text-align: center;
+    }
+
+    .credit {
+      background: rgba(255, 255, 255, 0.92);
+      padding: 4px 8px;
+      font-size: 12px;
+      color: #333;
+      border-radius: 6px;
+      box-shadow: 0 0 5px rgba(0,0,0,0.2);
+    }
+
+    /* Search UI */
+    .searchbox h4{ margin: 0 0 8px; font-size: 14px; text-align:center; }
+    .searchbox input{
+      width: 220px;
+      max-width: 60vw;
+      padding: 8px 10px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      outline: none;
+    }
+    .searchbox .btnrow{
+      display:flex;
+      gap:8px;
+      margin-top:8px;
+      justify-content:center;
+    }
+    .searchbox button{
+      padding: 7px 10px;
+      border: 1px solid #ddd;
+      background: #f7f7f7;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .searchbox button:hover{ background:#efefef; }
+    .searchbox .msg{
+      margin-top:8px;
+      font-size:12px;
+      color:#666;
+      text-align:center;
+      min-height: 16px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ✅ centered title -->
+  <div class="page-title">
+    <div>
+      <h2>SDG 10.4 (2024): Labour Income Share (%)</h2>
+      <span class="sub">Hover = highlight • Click = select (lock) • ESC = clear</span>
+    </div>
+  </div>
+
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    // ===== SETTINGS =====
+    const GEOJSON_FILE = "./clipqgis_wgs84.geojson";
+    const CLASS_FIELD = "SL_EMP_G20";   // 2024 column
+    const LEGEND_TITLE = "SDG 10.4 (2024): Labour Income Share (%)";
+    // ====================
+
+    const map = L.map('map', { worldCopyJump: true }).setView([20, 0], 2);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    // Credit control
+    const credit = L.control({ position: 'bottomleft' });
+    credit.onAdd = function () {
+      const div = L.DomUtil.create('div', 'credit');
+      div.innerHTML = 'Prepared by <b>Bilal Ahmad</b>';
+      return div;
+    };
+    credit.addTo(map);
+
+    // Fixed-class color function
+    function getColor(v) {
+      if (Number.isNaN(v)) return '#ccc';
+      return v >= 45 ? '#006d2c' :
+             v >= 30 ? '#2ca25f' :
+             v >= 15 ? '#66c2a4' :
+                       '#ccece6';
+    }
+
+    function baseStyle(feature) {
+      const v = Number(feature.properties[CLASS_FIELD]);
+      return {
+        fillColor: getColor(v),
+        weight: 1,
+        color: 'white',
+        fillOpacity: 0.75
+      };
+    }
+
+    function hoverStyle() {
+      return { weight: 3, color: '#000', fillOpacity: 0.88 };
+    }
+
+    function selectedStyle() {
+      return { weight: 4, color: '#ff7800', fillOpacity: 0.90 };
+    }
+
+    // Info control (top right)
+    const info = L.control({ position: 'topright' });
+    info.onAdd = function () {
+      this._div = L.DomUtil.create('div', 'info');
+      this.update();
+      return this._div;
+    };
+    info.update = function (props, selected=false) {
+      if (!props) {
+        this._div.innerHTML = `<h4>${LEGEND_TITLE}</h4>Hover over a country<br><small>Tip: click to select</small>`;
+        return;
+      }
+      const v = Number(props[CLASS_FIELD]);
+      this._div.innerHTML =
+        `<h4>${LEGEND_TITLE}</h4>` +
+        `<b>${props.COUNTRY ?? "Unknown"}</b>${selected ? " (selected)" : ""}<br>` +
+        `Value: ${Number.isNaN(v) ? "N/A" : v.toFixed(2)}`;
+    };
+    info.addTo(map);
+
+    // ✅ Prevent map scroll/drag while using controls
+    function stopMapEvents(el){
+      L.DomEvent.disableClickPropagation(el);
+      L.DomEvent.disableScrollPropagation(el);
+    }
+
+    let geoLayer;
+    let selectedLayer = null;
+
+    function clearSelection(){
+      if (selectedLayer) {
+        geoLayer.resetStyle(selectedLayer);
+        selectedLayer = null;
+        info.update();
+      }
+    }
+
+    function setSelected(layer){
+      clearSelection();
+      selectedLayer = layer;
+      layer.setStyle(selectedStyle());
+      layer.bringToFront();
+      info.update(layer.feature.properties, true);
+    }
+
+    function resetHighlight(e) {
+      const layer = e.target;
+      if (selectedLayer && layer === selectedLayer) return; // keep selected style
+      geoLayer.resetStyle(layer);
+      if (!selectedLayer) info.update();
+    }
+
+    function zoomToFeature(e) {
+      map.fitBounds(e.target.getBounds(), { padding: [10, 10] });
+    }
+
+    function highlightFeature(e) {
+      const layer = e.target;
+      if (selectedLayer && layer === selectedLayer) return; // don't override selected
+      layer.setStyle(hoverStyle());
+      layer.bringToFront();
+      info.update(layer.feature.properties, false);
+    }
+
+    function onEachFeature(feature, layer) {
+      layer.on({
+        mouseover: highlightFeature,
+        mouseout: resetHighlight,
+        click: (e) => {
+          setSelected(layer);
+          zoomToFeature(e);
+        }
+      });
+
+      const v = Number(feature.properties[CLASS_FIELD]);
+      layer.bindPopup(
+        `<b>${feature.properties.COUNTRY ?? "Unknown"}</b><br>` +
+        `${LEGEND_TITLE}: ${Number.isNaN(v) ? "N/A" : v.toFixed(2)}`
+      );
+    }
+
+    // ✅ Search control (top left)
+    const search = L.control({ position: 'topleft' });
+    search.onAdd = function(){
+      const div = L.DomUtil.create('div', 'searchbox');
+      div.innerHTML = `
+        <h4>Search Country</h4>
+        <input id="countrySearch" placeholder="Type country name..." />
+        <div class="btnrow">
+          <button id="btnFind">Find</button>
+          <button id="btnClear">Clear</button>
+        </div>
+        <div class="msg" id="searchMsg"></div>
+      `;
+      stopMapEvents(div);
+      return div;
+    };
+    search.addTo(map);
+
+    function findByName(name){
+      if (!geoLayer) return null;
+      const q = name.trim().toLowerCase();
+      let found = null;
+      geoLayer.eachLayer(l => {
+        const n = (l.feature?.properties?.COUNTRY ?? "").toString().toLowerCase();
+        if (n === q) found = l;
+      });
+      return found;
+    }
+
+    fetch(GEOJSON_FILE)
+      .then(r => {
+        if (!r.ok) throw new Error("GeoJSON not found. Check path. Status: " + r.status);
+        return r.json();
+      })
+      .then(data => {
+        geoLayer = L.geoJSON(data, {
+          style: baseStyle,
+          onEachFeature: onEachFeature
+        }).addTo(map);
+
+        map.fitBounds(geoLayer.getBounds(), { padding: [10, 10] });
+
+        // Legend (bottom right) ✅ aligned rows + proper order
+        const legend = L.control({ position: 'bottomright' });
+        legend.onAdd = function () {
+          const div = L.DomUtil.create('div', 'legend');
+          div.innerHTML = `
+            <h4>SDG 10.4 (2024)<br>Labour Income Share (%)</h4>
+            <div class="row"><span class="swatch" style="background:#ccece6"></span><span class="label">0 – 15</span></div>
+            <div class="row"><span class="swatch" style="background:#66c2a4"></span><span class="label">15 – 30</span></div>
+            <div class="row"><span class="swatch" style="background:#2ca25f"></span><span class="label">30 – 45</span></div>
+            <div class="row"><span class="swatch" style="background:#006d2c"></span><span class="label">45 – 60</span></div>
+            <div class="hint">Hover = highlight • Click = select • ESC = clear</div>
+          `;
+          stopMapEvents(div);
+          return div;
+        };
+        legend.addTo(map);
+
+        // Wire search buttons
+        const input = document.getElementById('countrySearch');
+        const msg = document.getElementById('searchMsg');
+
+        function doFind(){
+          msg.textContent = "";
+          const layer = findByName(input.value);
+          if (!layer){
+            msg.textContent = "Not found (make sure name matches your COUNTRY field).";
+            return;
+          }
+          setSelected(layer);
+          map.fitBounds(layer.getBounds(), { padding: [10, 10] });
+          layer.openPopup();
+          msg.textContent = "Found!";
+        }
+
+        document.getElementById('btnFind').addEventListener('click', doFind);
+        document.getElementById('btnClear').addEventListener('click', () => {
+          input.value = "";
+          msg.textContent = "";
+          clearSelection();
+        });
+
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') doFind();
+        });
+
+      })
+      .catch(err => {
+        console.error(err);
+        alert(err.message);
+      });
+
+    // ✅ ESC to clear selection
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') clearSelection();
+    });
+  </script>
+</body>
+</html>
